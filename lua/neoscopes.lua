@@ -12,6 +12,7 @@ local Scope = {}
 ---@field public add_dirs_to_all_scopes string[] the list of directories to include into all scopes.
 ---@field public current_scope string the current scope to select.
 ---@field public enable_scopes_from_npm boolean whether or not to load scopes from ./package.json workspaces
+---@field public enable_scopes_from_code_workspaces boolean whether or not to load scopes from ./*.code-workspace files
 ---@field public diff_branches_for_scopes string[] list of branch names to diff for git-diff scope definitions
 ---@field public diff_ancestors_for_scopes string[] list of branches to diff from git-ancestors scope definitions
 ---@field public neoscopes_config_filename string the name of the file that defines neoscopes configuration at a project-level
@@ -47,11 +48,11 @@ local function get_scopes_from_package_json(name_prefix)
       end
       for _, pkg_glob in pairs(pkg_globs) do
         for _, filename in ipairs(vim.fn.glob(pkg_glob .. "/package.json", true,
-                                    true)) do
+          true)) do
           filename = filename:gsub("/package.json$", "")
           table.insert(scope_list, {
             name = name_prefix .. filename,
-            dirs = {filename},
+            dirs = { filename },
             files = {},
             origin = "npm"
           })
@@ -83,7 +84,7 @@ local function get_scopes_from_git_diffs(branches, name_prefix)
       scope.on_select = function()
         -- refresh a git scope every time the scope is selected so that the list of
         -- files that differ are updated in the scope
-        local scopes_from_branch = get_scopes_from_git_diffs({to}, name_prefix)
+        local scopes_from_branch = get_scopes_from_git_diffs({ to }, name_prefix)
         for _, refreshed_scope in ipairs(scopes_from_branch) do
           M.add(refreshed_scope)
         end
@@ -99,7 +100,7 @@ end
 local function get_scopes_from_git_diffs_from_ancestors(branches, name_prefix)
   if name_prefix == nil then
     name_prefix = "git_ancestor:"
-  end
+ end
   local scope_list = {}
   for _, to in pairs(branches) do
     local scope = {
@@ -128,6 +129,37 @@ local function get_scopes_from_git_diffs_from_ancestors(branches, name_prefix)
   return scope_list
 end
 
+local function get_scopes_from_code_workspaces(name_prefix)
+  if name_prefix == nil then
+    name_prefix = "code_workspace:"
+  end
+  local scope_list = {}
+  local code_workspace
+  for file_or_dir in vim.fs.dir(".", { depth = 1 }) do
+    if file_or_dir:match(".*%.code%-workspace$") then
+      code_workspace = file_or_dir
+      break
+    end
+  end
+  if code_workspace ~= nil then
+    local tab = vim.fn.json_decode(vim.fn.readfile(code_workspace))
+    if tab ~= nil and tab.folders ~= nil then
+      local dirs = {}
+      for i, foldername in pairs(tab.folders) do
+        table.insert(dirs, i, './' .. foldername.path)
+      end
+
+      table.insert(scope_list, {
+        name = name_prefix .. code_workspace,
+        dirs = dirs,
+        files = {},
+        origin = "code_workspace"
+      })
+    end
+  end
+  return scope_list
+end
+
 ---@return Config - a configuration table representing the project level configuration
 local function get_project_level_config(config_filename)
   if not config_filename or stat(config_filename) == nil then
@@ -145,9 +177,9 @@ M.setup = function(config)
     config = {}
   end
   local project_level_config_filename = config.neoscopes_config_filename or
-                                          'neoscopes.config.json'
+      'neoscopes.config.json'
   local project_level_config = get_project_level_config(
-                                 project_level_config_filename)
+    project_level_config_filename)
   if config.scopes then
     M.add_all(config.scopes)
   end
@@ -155,7 +187,7 @@ M.setup = function(config)
     M.add_all(project_level_config.scopes)
   end
   if config.enable_scopes_from_npm or
-    project_level_config.enable_scopes_from_npm then
+      project_level_config.enable_scopes_from_npm then
     local npm_scopes = get_scopes_from_package_json()
     for _, scope in ipairs(npm_scopes) do
       M.add(scope)
@@ -163,22 +195,26 @@ M.setup = function(config)
   end
   if config.diff_branches_for_scopes then
     local git_scopes =
-      get_scopes_from_git_diffs(config.diff_branches_for_scopes)
+        get_scopes_from_git_diffs(config.diff_branches_for_scopes)
     M.add_all(git_scopes)
   end
   if project_level_config.diff_branches_for_scopes then
     local git_scopes = get_scopes_from_git_diffs(
-                         project_level_config.diff_branches_for_scopes)
+      project_level_config.diff_branches_for_scopes)
     M.add_all(git_scopes)
   end
   if config.diff_ancestors_for_scopes then
     local git_scopes =
-      get_scopes_from_git_diffs_from_ancestors(config.diff_ancestors_for_scopes)
+        get_scopes_from_git_diffs_from_ancestors(config.diff_ancestors_for_scopes)
     M.add_all(git_scopes)
+  end
+  if config.enable_scopes_from_code_workspaces then
+    local code_workspaces_scopes = get_scopes_from_code_workspaces()
+    M.add_all(code_workspaces_scopes)
   end
   if project_level_config.diff_ancestors_for_scopes then
     local git_scopes = get_scopes_from_git_diffs_from_ancestors(
-                         project_level_config.diff_ancestors_for_scopes)
+      project_level_config.diff_ancestors_for_scopes)
     M.add_all(git_scopes)
   end
   if config.add_dirs_to_all_scopes then
@@ -242,7 +278,7 @@ M.add_startup_scope = function()
   if #dirs == 0 then
     table.insert(dirs, vim.fn.getcwd())
   end
-  M.add({name = "<startup>", dirs = dirs})
+  M.add({ name = "<startup>", dirs = dirs })
   M.set_current("<startup>")
 end
 
@@ -352,7 +388,7 @@ local function select_with_native_ui()
     table.insert(names, name)
   end
   table.sort(names)
-  vim.ui.select(names, {prompt = "Select scope: "}, function(selected)
+  vim.ui.select(names, { prompt = "Select scope: " }, function(selected)
     if selected then
       M.set_current(selected)
     end
@@ -380,4 +416,3 @@ M.get_all_scopes = function()
 end
 
 return M
-
